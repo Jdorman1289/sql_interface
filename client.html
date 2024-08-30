@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SQL Query Client</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</head>
+
+<body>
+    <div class="container mt-5">
+        <h1 class="mb-4">SQL Query Client</h1>
+        <div class="mb-3">
+            <label for="sqlQuery" class="form-label">Enter SQL Query:</label>
+            <textarea class="form-control" id="sqlQuery" rows="3"></textarea>
+        </div>
+        <button id="executeQuery" class="btn btn-primary mb-3">Execute Query</button>
+        <div id="result">
+            <table class="table table-striped table-bordered">
+                <thead id="resultHeader"></thead>
+                <tbody id="resultBody"></tbody>
+            </table>
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function () {
+            document.getElementById('executeQuery').addEventListener('click', function () {
+                const query = document.getElementById('sqlQuery').value;
+                fetch('http://127.0.0.1:5000/query', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ query: query }),
+                })
+                    .then(response => response.json())
+                    .then(data => {
+                        displayResult(data.result);
+                    })
+                    .catch(error => {
+                        alert('Error: ' + error.message);
+                    });
+            });
+
+            function displayResult(result) {
+                if (result.length === 0) {
+                    document.getElementById('result').innerHTML = '<p>No results found.</p>';
+                    return;
+                }
+
+                const headers = Object.keys(result[0]);
+                let headerHtml = '<tr>';
+                headers.forEach(function (header) {
+                    headerHtml += '<th>' + header + '</th>';
+                });
+                headerHtml += '</tr>';
+                document.getElementById('resultHeader').innerHTML = headerHtml;
+
+                let bodyHtml = '';
+                result.forEach(function (row) {
+                    bodyHtml += '<tr>';
+                    headers.forEach(function (header) {
+                        bodyHtml += '<td>' + row[header] + '</td>';
+                    });
+                    bodyHtml += '</tr>';
+                });
+                document.getElementById('resultBody').innerHTML = bodyHtml;
+            }
+        });
+    </script>
+</body>
+
+</html>
