@@ -43,3 +43,6 @@ This project demonstrates a simple SQL query client that uses DuckDB to query da
 - `data.parquet`: Parquet file containing the data (generated from CSV)
 
 Enjoy querying your data with SQL!
+
+![Screenshot 2024-08-30 072453](https://github.com/user-attachments/assets/dc12b5cd-bef6-479f-94f1-65239f113288)
+
