@@ -3,3 +3,4 @@ pandas==2.2.2
 pyarrow==16.1.0
 flask==2.3.2
 flask-cors==3.0.10
+PyYAML==6.0.1

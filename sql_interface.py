@@ -1,8 +1,10 @@
 import duckdb
 import glob
+import yaml
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import logging
+from pathlib import Path
 
 app = Flask(__name__)
 CORS(app)
@@ -11,10 +13,20 @@ CORS(app)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Load configuration
+def load_config():
+    config_path = Path(__file__).parent / "config.yaml"
+    with open(config_path, 'r') as f:
+        return yaml.safe_load(f)
+
+config = load_config()
+PRIMARY_COL = config['primary_filter']['column']
+SECONDARY_COL = config['secondary_filter']['column']
+
 # Create an in-memory DuckDB connection
 db = duckdb.connect(":memory:")
 
-def get_available_states():
+def get_primary_values():
     try:
         # Create a view combining all parquet files
         parquet_files = glob.glob("*.parquet")
@@ -28,53 +40,66 @@ def get_available_states():
         db.execute("DROP VIEW IF EXISTS all_data")
         db.execute("CREATE VIEW all_data AS SELECT * FROM read_parquet('*.parquet')")
         
-        # Get unique states
-        result = db.execute("SELECT DISTINCT state_name FROM all_data ORDER BY state_name").fetchall()
-        states = [state[0] for state in result if state[0] is not None]
-        logger.info(f"Found states: {states}")
-        return states
+        # Get unique primary values
+        query = f"SELECT DISTINCT {PRIMARY_COL} FROM all_data ORDER BY {PRIMARY_COL}"
+        result = db.execute(query).fetchall()
+        values = [val[0] for val in result if val[0] is not None]
+        logger.info(f"Found primary values: {values}")
+        return values
     except Exception as e:
-        logger.error(f"Error getting states: {str(e)}")
+        logger.error(f"Error getting primary values: {str(e)}")
         raise
 
-@app.route("/states", methods=["GET"])
-def get_states():
+@app.route("/config", methods=["GET"])
+def get_config():
     try:
-        states = get_available_states()
-        return jsonify({"states": states})
+        return jsonify({
+            "primary_filter": config["primary_filter"],
+            "secondary_filter": config["secondary_filter"],
+            "ui": config["ui"]
+        })
     except Exception as e:
-        logger.error(f"Error in /states endpoint: {str(e)}")
+        logger.error(f"Error in /config endpoint: {str(e)}")
         return jsonify({"error": str(e)}), 500
 
-@app.route("/cities", methods=["POST"])
-def get_cities():
+@app.route("/primary", methods=["GET"])
+def get_primary():
+    try:
+        values = get_primary_values()
+        return jsonify({"values": values})
+    except Exception as e:
+        logger.error(f"Error in /primary endpoint: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/secondary", methods=["POST"])
+def get_secondary():
     try:
         data = request.json
-        if not data or "states" not in data:
-            return jsonify({"error": "No states provided"}), 400
+        if not data or "primary_values" not in data:
+            return jsonify({"error": "No primary values provided"}), 400
             
-        selected_states = data.get("states", [])
-        if not selected_states:
-            return jsonify({"cities": []})
+        primary_values = data.get("primary_values", [])
+        if not primary_values:
+            return jsonify({"values": []})
 
-        logger.info(f"Getting cities for states: {selected_states}")
+        logger.info(f"Getting secondary values for primary values: {primary_values}")
         
         # Create a view combining all parquet files
         db.execute("DROP VIEW IF EXISTS all_data")
         db.execute("CREATE VIEW all_data AS SELECT * FROM read_parquet('*.parquet')")
         
-        # Build the WHERE clause for state filtering
-        state_filter = "state_name IN (" + ",".join(f"'{state}'" for state in selected_states) + ")"
-        query = f"SELECT DISTINCT city FROM all_data WHERE {state_filter} ORDER BY city"
+        # Build the WHERE clause for primary filtering
+        primary_filter = f"{PRIMARY_COL} IN (" + ",".join(f"'{val}'" for val in primary_values) + ")"
+        query = f"SELECT DISTINCT {SECONDARY_COL} FROM all_data WHERE {primary_filter} ORDER BY {SECONDARY_COL}"
         
         logger.info(f"Executing query: {query}")
         result = db.execute(query).fetchall()
-        cities = [city[0] for city in result if city[0] is not None]
+        values = [val[0] for val in result if val[0] is not None]
         
-        logger.info(f"Found {len(cities)} cities")
-        return jsonify({"cities": cities})
+        logger.info(f"Found {len(values)} secondary values")
+        return jsonify({"values": values})
     except Exception as e:
-        logger.error(f"Error in /cities endpoint: {str(e)}")
+        logger.error(f"Error in /secondary endpoint: {str(e)}")
         return jsonify({"error": str(e)}), 500
 
 @app.route("/query", methods=["POST"])
@@ -84,24 +109,24 @@ def handle_query():
         if not data:
             return jsonify({"error": "No request data provided"}), 400
             
-        selected_states = data.get("states", [])
-        selected_cities = data.get("cities", [])
+        primary_values = data.get("primary_values", [])
+        secondary_values = data.get("secondary_values", [])
         
-        if not selected_states:
-            return jsonify({"error": "No states selected"}), 400
+        if not primary_values:
+            return jsonify({"error": "No primary values selected"}), 400
 
-        logger.info(f"Querying for states: {selected_states} and cities: {selected_cities}")
+        logger.info(f"Querying for primary values: {primary_values} and secondary values: {secondary_values}")
         
         # Create a view combining all parquet files
         db.execute("DROP VIEW IF EXISTS all_data")
         db.execute("CREATE VIEW all_data AS SELECT * FROM read_parquet('*.parquet')")
         
-        # Build the WHERE clause for state and city filtering
+        # Build the WHERE clause for filtering
         conditions = []
-        conditions.append("state_name IN (" + ",".join(f"'{state}'" for state in selected_states) + ")")
+        conditions.append(f"{PRIMARY_COL} IN (" + ",".join(f"'{val}'" for val in primary_values) + ")")
         
-        if selected_cities:
-            conditions.append("city IN (" + ",".join(f"'{city}'" for city in selected_cities) + ")")
+        if secondary_values:
+            conditions.append(f"{SECONDARY_COL} IN (" + ",".join(f"'{val}'" for val in secondary_values) + ")")
         
         where_clause = " AND ".join(conditions)
         query = f"SELECT * FROM all_data WHERE {where_clause}"
