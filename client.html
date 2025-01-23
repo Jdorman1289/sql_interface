@@ -27,6 +27,22 @@
         .order-row {
             margin-top: 1rem;
         }
+        .table-container {
+            margin-top: 20px;
+            overflow-x: auto;
+        }
+        .form-select {
+            margin-bottom: 10px;
+        }
+        .filter-group {
+            margin-bottom: 15px;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+        }
+        .data-mode-only {
+            display: block;
+        }
     </style>
 </head>
 <body>
@@ -34,28 +50,44 @@
         <h1 class="mb-4">Data Query Interface</h1>
         
         <div id="queryBuilder">
+            <div class="mb-3">
+                <label class="form-label">Query Mode:</label>
+                <select id="queryMode" class="form-select" onchange="onModeChange()">
+                    <option value="data">Query Data</option>
+                    <option value="parquet">Find Parquet Files</option>
+                </select>
+            </div>
+
             <h3>Filters</h3>
             <div id="filters"></div>
-            <button class="btn btn-secondary mt-2" onclick="addFilter()">Add Filter</button>
-            
-            <h3 class="mt-4">Ordering</h3>
-            <div id="ordering"></div>
-            <button class="btn btn-secondary mt-2" onclick="addOrder()">Add Order</button>
-            
-            <div class="mt-4">
-                <label for="limitInput" class="form-label">Limit Results</label>
-                <input type="number" class="form-control" id="limitInput" min="1" placeholder="Enter limit (optional)">
+            <div class="mt-2">
+                <button class="btn btn-secondary" onclick="addFilter()">Add Filter</button>
+            </div>
+
+            <div id="ordering" class="data-mode-only mt-4">
+                <h3>Ordering</h3>
+                <div id="orderingList"></div>
+                <button class="btn btn-secondary mt-2" onclick="addOrder()">Add Order</button>
             </div>
             
-            <button class="btn btn-primary mt-4" onclick="executeQuery()">Execute Query</button>
-            <button class="btn btn-danger mt-4 ms-2" onclick="clearAll()">Clear All</button>
-            <button class="btn btn-success mt-4 ms-2" onclick="exportToCsv()" id="exportButton" style="display: none;">Export to CSV</button>
+            <div class="mt-4 data-mode-only">
+                <label for="limitInput" class="form-label">Limit Results</label>
+                <input type="number" class="form-control" id="limitInput" min="1" value="100">
+            </div>
+
+            <div class="mt-5" id="actionButtons">
+                <div class="d-flex gap-2">
+                    <button class="btn btn-info" onclick="executeQuery()" id="executeButton">Find Files</button>
+                    <button class="btn btn-success" onclick="exportToCsv()" id="exportButton" style="display: none;">Export to CSV</button>
+                    <button class="btn btn-danger" onclick="clearAll()" id="clearButton" style="display: none;">Clear All</button>
+                </div>
+            </div>
         </div>
 
         <div id="resultsSection" style="display: none;">
-            <h3>Query Results</h3>
+            <h3 id="resultsTitle">Query Results</h3>
             <div class="table-container">
-                <table class="table table-striped results-table">
+                <table class="table table-striped">
                     <thead id="resultsHeader"></thead>
                     <tbody id="resultsBody"></tbody>
                 </table>
@@ -74,16 +106,29 @@
         };
 
         let queryResults = null; // Store the query results globally
+        let parquetFiles = null;
 
         async function loadConfig() {
             try {
                 const response = await fetch('http://127.0.0.1:5000/config');
-                config = await response.json();
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                const data = await response.json();
+                if (data.error) {
+                    throw new Error(data.error);
+                }
+                
+                // Update config with received data
+                config.available_columns = data.available_columns || [];
+                config.operators = data.operators || [];
+                
+                // Initialize the interface
                 addFilter();
                 addOrder();
             } catch (error) {
                 console.error('Error loading config:', error);
-                alert('Failed to load configuration');
+                alert('Failed to load configuration. Please check the server logs and refresh the page.');
             }
         }
 
@@ -106,7 +151,7 @@
             const select = document.createElement('select');
             select.className = 'form-select column-select';
             select.innerHTML = '<option value="">Select Column</option>' +
-                config.available_columns.map(col => 
+                (config.available_columns || []).map(col => 
                     `<option value="${col}">${col}</option>`
                 ).join('');
             select.onchange = onChange;
@@ -226,7 +271,7 @@
             row.appendChild(removeDiv);
             orderContainer.appendChild(row);
             
-            document.getElementById('ordering').appendChild(orderContainer);
+            document.getElementById('orderingList').appendChild(orderContainer);
         }
 
         function getFilters() {
@@ -267,47 +312,83 @@
             return orders;
         }
 
+        function onModeChange() {
+            const mode = document.getElementById('queryMode').value;
+            // Hide/show elements based on mode
+            const dataModeElements = document.querySelectorAll('.data-mode-only');
+            dataModeElements.forEach(element => {
+                element.style.display = mode === 'data' ? 'block' : 'none';
+            });
+            
+            // Update button text based on mode
+            const executeButton = document.getElementById('executeButton');
+            executeButton.textContent = mode === 'data' ? 'Execute Query' : 'Find Files';
+            executeButton.className = mode === 'data' ? 'btn btn-primary' : 'btn btn-info';
+            
+            // Clear results and hide clear button
+            clearResults();
+        }
+
         async function executeQuery() {
+            const mode = document.getElementById('queryMode').value;
+            const filters = getFilters();
+            const orders = mode === 'data' ? getOrders() : [];
+            const limit = mode === 'data' ? parseInt(document.getElementById('limitInput').value) : null;
+
+            if (!filters.length) {
+                alert('Please add at least one filter');
+                return;
+            }
+
             try {
-                const filters = getFilters();
-                const orders = getOrders();
-                const limit = document.getElementById('limitInput').value;
-                
-                const queryData = {
-                    filters,
-                    orders,
-                    limit: limit ? parseInt(limit) : null
-                };
-                
                 const response = await fetch('http://127.0.0.1:5000/query', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(queryData)
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        mode,
+                        filters,
+                        orders,
+                        limit
+                    })
                 });
-                
+
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+
                 const data = await response.json();
                 if (data.error) {
-                    alert(data.error);
-                    return;
+                    throw new Error(data.error);
                 }
-                
-                displayResults(data.result);
+
+                if (mode === 'data') {
+                    displayResults(data.results);
+                } else {
+                    displayParquetFiles(data.parquet_files);
+                }
             } catch (error) {
                 console.error('Error executing query:', error);
-                alert('Failed to execute query');
+                alert('Failed to execute query: ' + error.message);
             }
         }
 
         function displayResults(results) {
-            queryResults = results; // Store the results
             if (!results || results.length === 0) {
-                alert('No results found');
+                document.getElementById('results').innerHTML = '<p>No results found</p>';
                 document.getElementById('exportButton').style.display = 'none';
+                document.getElementById('clearButton').style.display = 'flex';
+                document.getElementById('resultsSection').style.display = 'block';
                 return;
             }
 
+            // Store results globally for CSV export
+            queryResults = results;
+
             // Show export button when we have results
-            document.getElementById('exportButton').style.display = 'inline-block';
+            document.getElementById('exportButton').style.display = 'flex';
+            document.getElementById('clearButton').style.display = 'flex';
 
             const columns = Object.keys(results[0]);
             
@@ -319,8 +400,9 @@
                 headerRow.appendChild(th);
             });
             
-            document.getElementById('resultsHeader').innerHTML = '';
-            document.getElementById('resultsHeader').appendChild(headerRow);
+            const resultsHeader = document.getElementById('resultsHeader');
+            resultsHeader.innerHTML = '';
+            resultsHeader.appendChild(headerRow);
             
             // Create body
             const tbody = document.getElementById('resultsBody');
@@ -330,13 +412,67 @@
                 const tr = document.createElement('tr');
                 columns.forEach(col => {
                     const td = document.createElement('td');
-                    td.textContent = row[col];
+                    td.textContent = row[col] === null ? '' : row[col];
                     tr.appendChild(td);
                 });
                 tbody.appendChild(tr);
             });
             
             document.getElementById('resultsSection').style.display = 'block';
+        }
+
+        function displayParquetFiles(files) {
+            document.getElementById('exportButton').style.display = 'none';
+            document.getElementById('clearButton').style.display = 'block';
+            const resultsHeader = document.getElementById('resultsHeader');
+            const resultsBody = document.getElementById('resultsBody');
+            
+            resultsHeader.innerHTML = `
+                <tr>
+                    <th>File Name</th>
+                    <th>Action</th>
+                </tr>
+            `;
+            
+            resultsBody.innerHTML = '';
+            
+            if (!files || files.length === 0) {
+                resultsBody.innerHTML = '<tr><td colspan="2">No matching parquet files found</td></tr>';
+                document.getElementById('resultsSection').style.display = 'block';
+                return;
+            }
+
+            files.forEach(file => {
+                const row = document.createElement('tr');
+                row.innerHTML = `
+                    <td>${file}</td>
+                    <td>
+                        <button class="btn btn-primary btn-sm" onclick="downloadParquet('${file}')">
+                            Download
+                        </button>
+                    </td>
+                `;
+                resultsBody.appendChild(row);
+            });
+            
+            document.getElementById('resultsSection').style.display = 'block';
+        }
+
+        async function downloadParquet(filename) {
+            try {
+                const response = await fetch(`http://127.0.0.1:5000/download/${encodeURIComponent(filename)}`);
+                const blob = await response.blob();
+                
+                const link = document.createElement('a');
+                link.href = URL.createObjectURL(blob);
+                link.download = filename;
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+            } catch (error) {
+                console.error('Error downloading file:', error);
+                alert('Failed to download file');
+            }
         }
 
         function exportToCsv() {
@@ -375,18 +511,24 @@
             document.body.removeChild(link);
         }
 
-        function clearAll() {
-            document.getElementById('filters').innerHTML = '';
-            document.getElementById('ordering').innerHTML = '';
-            document.getElementById('limitInput').value = '';
+        function clearResults() {
             document.getElementById('resultsSection').style.display = 'none';
+            document.getElementById('resultsHeader').innerHTML = '';
+            document.getElementById('resultsBody').innerHTML = '';
             document.getElementById('exportButton').style.display = 'none';
-            addFilter();
-            addOrder();
+            document.getElementById('clearButton').style.display = 'none';
+        }
+
+        function clearAll() {
+            clearResults();
+            document.getElementById('filters').innerHTML = '';
+            document.getElementById('orderingList').innerHTML = '';
+            document.getElementById('limitInput').value = '100';
         }
 
         // Initialize the interface
         loadConfig();
+        onModeChange(); // Set initial button state
     </script>
 </body>
 </html>

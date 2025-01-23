@@ -1,12 +1,13 @@
 import duckdb
 import glob
 import yaml
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
 import logging
 from pathlib import Path
 from sql_queries import *
 from typing import List, Dict, Any
+import os
 
 app = Flask(__name__)
 CORS(app)
@@ -29,18 +30,58 @@ db = duckdb.connect(":memory:")
 def setup_database():
     """Initialize database and create view."""
     try:
-        parquet_files = glob.glob("*.parquet")
+        # Look for parquet files in the current directory
+        current_dir = Path(__file__).parent
+        parquet_files = list(current_dir.glob("*.parquet"))
+        
         if not parquet_files:
             logger.warning("No parquet files found in the current directory")
             return False
         
         logger.info(f"Found parquet files: {parquet_files}")
-        db.execute(drop_all_data_view())
-        db.execute(create_all_data_view())
-        return True
+        
+        # Drop existing view if it exists
+        drop_query = drop_all_data_view()
+        logger.info(f"Executing drop query: {drop_query}")
+        db.execute(drop_query)
+        
+        # Create new view
+        create_query = create_all_data_view()
+        logger.info(f"Executing create query: {create_query}")
+        db.execute(create_query)
+        
+        # Verify the view was created
+        try:
+            logger.info("Verifying view by executing SELECT query...")
+            result = db.execute("SELECT * FROM all_data LIMIT 1").fetchdf()
+            logger.info(f"Successfully queried view. Got {len(result)} rows")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to verify all_data view: {str(e)}")
+            # Try to get more information about the view
+            try:
+                logger.info("Attempting to get view information...")
+                db.execute("DESCRIBE all_data")
+            except Exception as describe_error:
+                logger.error(f"Could not get view information: {str(describe_error)}")
+            return False
+            
     except Exception as e:
         logger.error(f"Error setting up database: {str(e)}")
         return False
+
+# Test parquet reading
+try:
+    test_file = str(Path(__file__).parent / 'data.parquet')
+    logger.info(f"Testing parquet reading with file: {test_file}")
+    result = db.execute(f"SELECT * FROM read_parquet('{test_file}') LIMIT 1").fetchdf()
+    logger.info(f"Successfully read test parquet file. Schema: {list(result.columns)}")
+except Exception as e:
+    logger.error(f"Failed to read test parquet file: {str(e)}")
+
+# Initialize database on startup
+if not setup_database():
+    logger.error("Failed to initialize database")
 
 @app.route("/config", methods=["GET"])
 def get_config():
@@ -59,8 +100,7 @@ def get_config():
                 {"value": "IN", "label": "in list"},
                 {"value": "NOT IN", "label": "not in list"},
                 {"value": "LIKE", "label": "contains"},
-            ],
-            "ui": config["ui"]
+            ]
         }
         logger.info(f"Configuration response: {response_data}")
         return jsonify(response_data)
@@ -94,53 +134,70 @@ def get_distinct():
 def handle_query():
     """Handle complex queries with filters, ordering, and limits."""
     try:
-        data = request.json
-        if not data:
-            return jsonify({"error": "No request data provided"}), 400
-            
-        # Validate filters
-        filters = data.get("filters", [])
-        for f in filters:
-            if not all(k in f for k in ["column", "operator", "value"]):
-                return jsonify({"error": "Invalid filter format"}), 400
-            if f["column"] not in config["available_columns"]:
-                return jsonify({"error": f"Invalid column in filter: {f['column']}"}), 400
-
-        # Validate ordering
-        orders = data.get("orders", [])
-        for o in orders:
-            if not all(k in o for k in ["column", "direction"]):
-                return jsonify({"error": "Invalid order format"}), 400
-            if o["column"] not in config["available_columns"]:
-                return jsonify({"error": f"Invalid column in order: {o['column']}"}), 400
-            if o["direction"] not in ["ASC", "DESC"]:
-                return jsonify({"error": f"Invalid direction in order: {o['direction']}"}), 400
-
-        limit = data.get("limit")
-        if limit is not None and not isinstance(limit, int):
-            return jsonify({"error": "Limit must be an integer"}), 400
-
+        # Ensure database is set up
         if not setup_database():
             return jsonify({"error": "Failed to setup database"}), 500
             
-        query = get_filtered_data(filters, orders, limit)
-        logger.info(f"Executing query: {query}")
-        result = db.execute(query).fetchall()
-        column_names = [col[0] for col in db.execute(query).description]
+        data = request.json
+        mode = data.get('mode', 'data')
+        filters = data.get('filters', [])
         
-        # Convert results to list of dictionaries
-        formatted_result = [
-            dict(zip(column_names, row))
-            for row in result
-        ]
-        
-        logger.info(f"Query returned {len(formatted_result)} rows")
-        return jsonify({
-            "result": formatted_result,
-            "query": query  # Include the query for debugging
-        })
+        if mode == 'data':
+            orders = data.get('orders', [])
+            limit = data.get('limit')
+            
+            # Validate filters
+            for f in filters:
+                if not all(k in f for k in ["column", "operator", "value"]):
+                    return jsonify({"error": "Invalid filter format"}), 400
+                if f["column"] not in config["available_columns"]:
+                    return jsonify({"error": f"Invalid column in filter: {f['column']}"}), 400
+
+            # Validate ordering
+            for o in orders:
+                if not all(k in o for k in ["column", "direction"]):
+                    return jsonify({"error": "Invalid order format"}), 400
+                if o["column"] not in config["available_columns"]:
+                    return jsonify({"error": f"Invalid column in order: {o['column']}"}), 400
+                if o["direction"] not in ["ASC", "DESC"]:
+                    return jsonify({"error": f"Invalid direction in order: {o['direction']}"}), 400
+
+            if limit is not None and not isinstance(limit, int):
+                return jsonify({"error": "Limit must be an integer"}), 400
+
+            # Execute the query
+            query = get_filtered_data(filters, orders, limit)
+            logger.info(f"Executing query: {query}")
+            result = db.execute(query).fetchdf()
+            
+            # Convert to dict for JSON serialization
+            return jsonify({"results": result.to_dict(orient='records')})
+        else:
+            # Find matching parquet files
+            query = find_matching_parquet_files(filters)
+            logger.info(f"Executing query: {query}")
+            result = db.execute(query).fetchdf()
+            
+            # Get list of unique parquet files and extract just the filenames
+            parquet_files = [Path(path).name for path in result['_file_path_'].unique()]
+            return jsonify({"parquet_files": parquet_files})
+            
     except Exception as e:
         logger.error(f"Error in /query endpoint: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/download/<path:filename>")
+def download_file(filename):
+    """Download a parquet file."""
+    try:
+        return send_file(
+            filename,
+            as_attachment=True,
+            download_name=os.path.basename(filename),
+            mimetype='application/octet-stream'
+        )
+    except Exception as e:
+        logger.error(f"Error downloading file {filename}: {str(e)}")
         return jsonify({"error": str(e)}), 500
 
 if __name__ == "__main__":
