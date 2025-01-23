@@ -8,6 +8,26 @@ secondary_filter:
   column: "city"             # Column name in parquet files
   depends_on: "primary"      # This filter depends on the primary filter
 
+# Available columns for querying
+available_columns:
+  - "city"
+  - "city_ascii"
+  - "state_id"
+  - "state_name"
+  - "county_fips"
+  - "county_name"
+  - "lat"
+  - "lng"
+  - "population"
+  - "density"
+  - "source"
+  - "military"
+  - "incorporated"
+  - "timezone"
+  - "ranking"
+  - "zips"
+  - "id"
+
 # UI Configuration
 ui:
   title: "Location Data Explorer"

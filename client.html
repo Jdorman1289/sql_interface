@@ -1,289 +1,347 @@
 <!DOCTYPE html>
 <html lang="en">
-
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Data Explorer</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <title>Data Query Interface</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/css/select2.min.css" rel="stylesheet" />
-    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js"></script>
     <style>
-        .loading {
-            opacity: 0.5;
-            pointer-events: none;
+        .filter-row {
+            margin-bottom: 1rem;
+            padding: 1rem;
+            border: 1px solid #dee2e6;
+            border-radius: 0.25rem;
+            background-color: #f8f9fa;
         }
-        #errorMessage {
-            display: none;
+        .results-table {
+            margin-top: 2rem;
+        }
+        .table-container {
+            max-height: 500px;
+            overflow-y: auto;
+        }
+        #queryBuilder {
+            margin-bottom: 2rem;
+        }
+        .order-row {
             margin-top: 1rem;
-        }
-        .select2-container {
-            width: 100% !important;
-        }
-        .button-group {
-            display: flex;
-            gap: 10px;
         }
     </style>
 </head>
-
 <body>
     <div class="container mt-5">
-        <h1 class="mb-4" id="pageTitle">Data Explorer</h1>
+        <h1 class="mb-4">Data Query Interface</h1>
         
-        <div class="row mb-4">
-            <div class="col-md-6 mb-3">
-                <label id="primaryLabel" for="primarySelect" class="form-label">Primary Filter:</label>
-                <select class="form-select" id="primarySelect" multiple="multiple">
-                    <option value="" disabled>Primary values</option>
-                </select>
+        <div id="queryBuilder">
+            <h3>Filters</h3>
+            <div id="filters"></div>
+            <button class="btn btn-secondary mt-2" onclick="addFilter()">Add Filter</button>
+            
+            <h3 class="mt-4">Ordering</h3>
+            <div id="ordering"></div>
+            <button class="btn btn-secondary mt-2" onclick="addOrder()">Add Order</button>
+            
+            <div class="mt-4">
+                <label for="limitInput" class="form-label">Limit Results</label>
+                <input type="number" class="form-control" id="limitInput" min="1" placeholder="Enter limit (optional)">
             </div>
-            <div class="col-md-6 mb-3">
-                <label id="secondaryLabel" for="secondarySelect" class="form-label">Secondary Filter:</label>
-                <select class="form-select" id="secondarySelect" multiple="multiple">
-                    <option value="" disabled>Select primary values first...</option>
-                </select>
-            </div>
+            
+            <button class="btn btn-primary mt-4" onclick="executeQuery()">Execute Query</button>
+            <button class="btn btn-danger mt-4 ms-2" onclick="clearAll()">Clear All</button>
         </div>
 
-        <div class="alert alert-danger" id="errorMessage" role="alert"></div>
-
-        <div class="button-group mb-3">
-            <button id="queryData" class="btn btn-primary">
-                <span class="spinner-border spinner-border-sm d-none" role="status" aria-hidden="true"></span>
-                Query Data
-            </button>
-            <button id="clearData" class="btn btn-secondary">Clear</button>
-        </div>
-
-        <div id="result" class="mt-4">
-            <table class="table table-striped table-bordered">
-                <thead id="resultHeader"></thead>
-                <tbody id="resultBody"></tbody>
-            </table>
+        <div id="resultsSection" style="display: none;">
+            <h3>Query Results</h3>
+            <div class="table-container">
+                <table class="table table-striped results-table">
+                    <thead id="resultsHeader"></thead>
+                    <tbody id="resultsBody"></tbody>
+                </table>
+            </div>
         </div>
     </div>
 
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js"></script>
+    
     <script>
-        $(document).ready(function() {
-            const errorMessage = $('#errorMessage');
-            const queryButton = $('#queryData');
-            const clearButton = $('#clearData');
-            const spinner = queryButton.find('.spinner-border');
-            const resultDiv = $('#result');
-            let config = null;
-            
-            // Initialize Select2 elements
-            const primarySelect = $('#primarySelect').select2({
-                placeholder: 'Loading...',
-                allowClear: true
-            });
+        let config = {
+            available_columns: [],
+            operators: []
+        };
 
-            const secondarySelect = $('#secondarySelect').select2({
-                placeholder: 'Select primary values first...',
-                allowClear: true
-            });
-            
-            function showError(message) {
-                errorMessage.text(message).show();
-                setTimeout(() => errorMessage.fadeOut(), 5000);
+        async function loadConfig() {
+            try {
+                const response = await fetch('http://127.0.0.1:5000/config');
+                config = await response.json();
+                addFilter();
+                addOrder();
+            } catch (error) {
+                console.error('Error loading config:', error);
+                alert('Failed to load configuration');
             }
+        }
 
-            function setLoading(isLoading) {
-                if (isLoading) {
-                    spinner.removeClass('d-none');
-                    queryButton.addClass('loading');
-                } else {
-                    spinner.addClass('d-none');
-                    queryButton.removeClass('loading');
-                }
-            }
-
-            function clearResults() {
-                resultDiv.html('<table class="table table-striped table-bordered"><thead id="resultHeader"></thead><tbody id="resultBody"></tbody></table>');
-                primarySelect.val(null).trigger('change');
-                secondarySelect.val(null).trigger('change');
-            }
-
-            // Load configuration
-            fetch('http://127.0.0.1:5000/config')
-                .then(response => response.json())
-                .then(data => {
-                    config = data;
-                    
-                    // Update UI text
-                    document.title = config.ui.title;
-                    $('#pageTitle').text(config.ui.title);
-                    $('#primaryLabel').text(config.primary_filter.name + ':');
-                    $('#secondaryLabel').text(config.secondary_filter.name + ':');
-                    $('#queryData').text(config.ui.query_button_text);
-                    $('#clearData').text(config.ui.clear_button_text);
-                    
-                    // Update Select2 placeholders
-                    primarySelect.data('placeholder', config.ui.primary_placeholder);
-                    secondarySelect.data('placeholder', config.ui.secondary_placeholder);
-                    
-                    // Trigger placeholder update
-                    primarySelect.trigger('change');
-                    secondarySelect.trigger('change');
-
-                    // Load primary values
-                    loadPrimaryValues();
-                })
-                .catch(error => {
-                    showError('Error loading configuration: ' + error.message);
-                });
-
-            function loadPrimaryValues() {
-                fetch('http://127.0.0.1:5000/primary')
-                    .then(response => {
-                        if (!response.ok) {
-                            throw new Error(`HTTP error! status: ${response.status}`);
-                        }
-                        return response.json();
-                    })
-                    .then(data => {
-                        if (!data || !data.values) {
-                            throw new Error('Invalid response format from server');
-                        }
-                        
-                        // Clear loading option
-                        primarySelect.empty();
-                        
-                        if (data.values.length === 0) {
-                            showError('No primary values found in the data');
-                            return;
-                        }
-
-                        // Add values to select
-                        data.values.forEach(value => {
-                            primarySelect.append(new Option(value, value));
-                        });
-                    })
-                    .catch(error => {
-                        showError('Error loading primary values: ' + error.message);
-                    });
-            }
-
-            // Update secondary values when primary selection changes
-            primarySelect.on('change', function() {
-                const selectedValues = $(this).val();
-                secondarySelect.empty();
-                
-                if (!selectedValues || selectedValues.length === 0) {
-                    if (config) {
-                        secondarySelect.append(new Option(config.ui.primary_placeholder, '')).trigger('change');
-                    }
-                    return;
-                }
-
-                fetch('http://127.0.0.1:5000/secondary', {
+        async function getDistinctValues(column) {
+            try {
+                const response = await fetch('http://127.0.0.1:5000/distinct', {
                     method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({ primary_values: selectedValues }),
-                })
-                .then(response => {
-                    if (!response.ok) {
-                        throw new Error(`HTTP error! status: ${response.status}`);
-                    }
-                    return response.json();
-                })
-                .then(data => {
-                    if (data.error) {
-                        throw new Error(data.error);
-                    }
-                    
-                    secondarySelect.empty();
-                    
-                    if (!data.values || data.values.length === 0) {
-                        secondarySelect.append(new Option(config.ui.no_results_text, '')).trigger('change');
-                        return;
-                    }
-
-                    data.values.forEach(value => {
-                        secondarySelect.append(new Option(value, value));
-                    });
-                })
-                .catch(error => {
-                    showError('Error loading secondary values: ' + error.message);
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ column })
                 });
-            });
-
-            // Handle clear button click
-            clearButton.click(clearResults);
-
-            // Handle query button click
-            queryButton.click(function() {
-                const primaryValues = primarySelect.val();
-                const secondaryValues = secondarySelect.val();
-                
-                if (!primaryValues || primaryValues.length === 0) {
-                    showError(`Please select at least one ${config.primary_filter.name.toLowerCase()}`);
-                    return;
-                }
-
-                setLoading(true);
-
-                fetch('http://127.0.0.1:5000/query', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({ 
-                        primary_values: primaryValues,
-                        secondary_values: secondaryValues || []
-                    }),
-                })
-                .then(response => {
-                    if (!response.ok) {
-                        throw new Error(`HTTP error! status: ${response.status}`);
-                    }
-                    return response.json();
-                })
-                .then(data => {
-                    if (data.error) {
-                        throw new Error(data.error);
-                    }
-                    displayResult(data.result);
-                })
-                .catch(error => {
-                    showError('Error: ' + error.message);
-                })
-                .finally(() => {
-                    setLoading(false);
-                });
-            });
-
-            function displayResult(result) {
-                if (!result || result.length === 0) {
-                    resultDiv.html(`<p>${config.ui.no_results_text}</p>`);
-                    return;
-                }
-
-                const headers = Object.keys(result[0]);
-                let headerHtml = '<tr>';
-                headers.forEach(function(header) {
-                    headerHtml += '<th>' + header + '</th>';
-                });
-                headerHtml += '</tr>';
-                document.getElementById('resultHeader').innerHTML = headerHtml;
-
-                let bodyHtml = '';
-                result.forEach(function(row) {
-                    bodyHtml += '<tr>';
-                    headers.forEach(function(header) {
-                        bodyHtml += '<td>' + (row[header] !== null ? row[header] : '') + '</td>';
-                    });
-                    bodyHtml += '</tr>';
-                });
-                document.getElementById('resultBody').innerHTML = bodyHtml;
+                const data = await response.json();
+                return data.values || [];
+            } catch (error) {
+                console.error('Error getting distinct values:', error);
+                return [];
             }
-        });
+        }
+
+        function createColumnSelect(containerId, onChange) {
+            const select = document.createElement('select');
+            select.className = 'form-select column-select';
+            select.innerHTML = '<option value="">Select Column</option>' +
+                config.available_columns.map(col => 
+                    `<option value="${col}">${col}</option>`
+                ).join('');
+            select.onchange = onChange;
+            return select;
+        }
+
+        function createOperatorSelect() {
+            const select = document.createElement('select');
+            select.className = 'form-select operator-select';
+            select.innerHTML = '<option value="">Select Operator</option>' +
+                config.operators.map(op => 
+                    `<option value="${op.value}">${op.label}</option>`
+                ).join('');
+            return select;
+        }
+
+        function addFilter() {
+            const filterContainer = document.createElement('div');
+            filterContainer.className = 'filter-row';
+            
+            const row = document.createElement('div');
+            row.className = 'row';
+            
+            // Column select
+            const colDiv = document.createElement('div');
+            colDiv.className = 'col';
+            const colSelect = createColumnSelect('column', () => {
+                // Clear and update value input when column changes
+                valueInput.value = '';
+                valueInput.style.display = 'block';
+                valueSelect.style.display = 'none';
+            });
+            colDiv.appendChild(colSelect);
+            
+            // Operator select
+            const opDiv = document.createElement('div');
+            opDiv.className = 'col';
+            const opSelect = createOperatorSelect();
+            opDiv.appendChild(opSelect);
+            
+            // Value input/select
+            const valueDiv = document.createElement('div');
+            valueDiv.className = 'col';
+            const valueInput = document.createElement('input');
+            valueInput.className = 'form-control value-input';
+            valueInput.placeholder = 'Enter value';
+            
+            const valueSelect = document.createElement('select');
+            valueSelect.className = 'form-control value-select';
+            valueSelect.style.display = 'none';
+            valueSelect.multiple = true;
+            
+            valueDiv.appendChild(valueInput);
+            valueDiv.appendChild(valueSelect);
+            
+            // Remove button
+            const removeDiv = document.createElement('div');
+            removeDiv.className = 'col-auto';
+            const removeBtn = document.createElement('button');
+            removeBtn.className = 'btn btn-danger';
+            removeBtn.innerHTML = 'Remove';
+            removeBtn.onclick = () => filterContainer.remove();
+            removeDiv.appendChild(removeBtn);
+            
+            row.appendChild(colDiv);
+            row.appendChild(opDiv);
+            row.appendChild(valueDiv);
+            row.appendChild(removeDiv);
+            filterContainer.appendChild(row);
+            
+            document.getElementById('filters').appendChild(filterContainer);
+            
+            // Initialize Select2 for the value select
+            $(valueSelect).select2({
+                width: '100%',
+                tags: true,
+                tokenSeparators: [',', ' ']
+            });
+        }
+
+        function addOrder() {
+            const orderContainer = document.createElement('div');
+            orderContainer.className = 'order-row';
+            
+            const row = document.createElement('div');
+            row.className = 'row';
+            
+            // Column select
+            const colDiv = document.createElement('div');
+            colDiv.className = 'col';
+            const colSelect = createColumnSelect('orderColumn');
+            colDiv.appendChild(colSelect);
+            
+            // Direction select
+            const dirDiv = document.createElement('div');
+            dirDiv.className = 'col';
+            const dirSelect = document.createElement('select');
+            dirSelect.className = 'form-select direction-select';
+            dirSelect.innerHTML = `
+                <option value="">Select Direction</option>
+                <option value="ASC">Ascending</option>
+                <option value="DESC">Descending</option>
+            `;
+            dirDiv.appendChild(dirSelect);
+            
+            // Remove button
+            const removeDiv = document.createElement('div');
+            removeDiv.className = 'col-auto';
+            const removeBtn = document.createElement('button');
+            removeBtn.className = 'btn btn-danger';
+            removeBtn.innerHTML = 'Remove';
+            removeBtn.onclick = () => orderContainer.remove();
+            removeDiv.appendChild(removeBtn);
+            
+            row.appendChild(colDiv);
+            row.appendChild(dirDiv);
+            row.appendChild(removeDiv);
+            orderContainer.appendChild(row);
+            
+            document.getElementById('ordering').appendChild(orderContainer);
+        }
+
+        function getFilters() {
+            const filters = [];
+            document.querySelectorAll('.filter-row').forEach(row => {
+                const column = row.querySelector('.column-select').value;
+                const operator = row.querySelector('.operator-select').value;
+                const valueInput = row.querySelector('.value-input');
+                const valueSelect = row.querySelector('.value-select');
+                
+                if (column && operator) {
+                    let value;
+                    if (valueSelect.style.display === 'none') {
+                        value = valueInput.value;
+                        // Convert to number if possible
+                        if (!isNaN(value) && value !== '') {
+                            value = Number(value);
+                        }
+                    } else {
+                        value = $(valueSelect).select2('data').map(item => item.text);
+                    }
+                    
+                    filters.push({ column, operator, value });
+                }
+            });
+            return filters;
+        }
+
+        function getOrders() {
+            const orders = [];
+            document.querySelectorAll('.order-row').forEach(row => {
+                const column = row.querySelector('.column-select').value;
+                const direction = row.querySelector('.direction-select').value;
+                if (column && direction) {
+                    orders.push({ column, direction });
+                }
+            });
+            return orders;
+        }
+
+        async function executeQuery() {
+            try {
+                const filters = getFilters();
+                const orders = getOrders();
+                const limit = document.getElementById('limitInput').value;
+                
+                const queryData = {
+                    filters,
+                    orders,
+                    limit: limit ? parseInt(limit) : null
+                };
+                
+                const response = await fetch('http://127.0.0.1:5000/query', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(queryData)
+                });
+                
+                const data = await response.json();
+                if (data.error) {
+                    alert(data.error);
+                    return;
+                }
+                
+                displayResults(data.result);
+            } catch (error) {
+                console.error('Error executing query:', error);
+                alert('Failed to execute query');
+            }
+        }
+
+        function displayResults(results) {
+            if (!results || results.length === 0) {
+                alert('No results found');
+                return;
+            }
+            
+            const columns = Object.keys(results[0]);
+            
+            // Create header
+            const headerRow = document.createElement('tr');
+            columns.forEach(col => {
+                const th = document.createElement('th');
+                th.textContent = col;
+                headerRow.appendChild(th);
+            });
+            
+            document.getElementById('resultsHeader').innerHTML = '';
+            document.getElementById('resultsHeader').appendChild(headerRow);
+            
+            // Create body
+            const tbody = document.getElementById('resultsBody');
+            tbody.innerHTML = '';
+            
+            results.forEach(row => {
+                const tr = document.createElement('tr');
+                columns.forEach(col => {
+                    const td = document.createElement('td');
+                    td.textContent = row[col];
+                    tr.appendChild(td);
+                });
+                tbody.appendChild(tr);
+            });
+            
+            document.getElementById('resultsSection').style.display = 'block';
+        }
+
+        function clearAll() {
+            document.getElementById('filters').innerHTML = '';
+            document.getElementById('ordering').innerHTML = '';
+            document.getElementById('limitInput').value = '';
+            document.getElementById('resultsSection').style.display = 'none';
+            addFilter();
+            addOrder();
+        }
+
+        // Initialize the interface
+        loadConfig();
     </script>
 </body>
-
 </html>
