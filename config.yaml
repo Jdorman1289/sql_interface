@@ -1,13 +1,3 @@
-# Column names in your parquet files
-primary_filter:
-  name: "Primary Location"  # Display name for the first dropdown
-  column: "state_name"      # Column name in parquet files
-  
-secondary_filter:
-  name: "Secondary Location"  # Display name for the second dropdown
-  column: "city"             # Column name in parquet files
-  depends_on: "primary"      # This filter depends on the primary filter
-
 # Available columns for querying
 available_columns:
   - "city"
@@ -27,13 +17,3 @@ available_columns:
   - "ranking"
   - "zips"
   - "id"
-
-# UI Configuration
-ui:
-  title: "Location Data Explorer"
-  primary_placeholder: "Select primary locations..."
-  secondary_placeholder: "Select secondary locations..."
-  query_button_text: "Query Selected Data"
-  clear_button_text: "Clear Results"
-  no_results_text: "No results found"
-  loading_text: "Loading..."
