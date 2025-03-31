@@ -7,6 +7,9 @@ from pathlib import Path
 from sql_queries import *
 import os
 
+# Constants
+ERROR_DB_SETUP_FAILED = "Failed to setup database"
+
 app = Flask(__name__)
 CORS(app)
 
@@ -134,8 +137,7 @@ def handle_query():
     try:
         # Ensure database is set up
         if not setup_database():
-            return jsonify({"error": "Failed to setup database"}), 500
-            
+            return jsonify({"error": ERROR_DB_SETUP_FAILED}), 500        
         data = request.json
         mode = data.get('mode', 'data')
         filters = data.get('filters', [])
@@ -182,6 +184,34 @@ def handle_query():
             
     except Exception as e:
         logger.error(f"Error in /query endpoint: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/execute_sql", methods=["POST"])
+def execute_sql():
+    """Execute custom SQL query from the frontend."""
+    try:
+        # Ensure database is set up
+        if not setup_database():
+            return jsonify({"error": ERROR_DB_SETUP_FAILED}), 500        
+        data = request.json
+        if not data or "sql" not in data:
+            return jsonify({"error": "No SQL query provided"}), 400
+            
+        sql_query = data["sql"].strip()
+        
+        # Basic security check - only allow SELECT statements
+        if not sql_query.upper().startswith("SELECT"):
+            return jsonify({"error": "Only SELECT queries are allowed"}), 400
+        
+        # Execute the query
+        logger.info(f"Executing custom SQL query: {sql_query}")
+        result = db.execute(sql_query).fetchdf()
+        
+        # Convert to dict for JSON serialization
+        return jsonify({"results": result.to_dict(orient='records')})
+            
+    except Exception as e:
+        logger.error(f"Error in /execute_sql endpoint: {str(e)}")
         return jsonify({"error": str(e)}), 500
 
 @app.route("/download/<path:filename>")

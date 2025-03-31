@@ -51,17 +51,28 @@
         
         <div id="queryBuilder">
             <div class="mb-3">
-                <label class="form-label">Query Mode:</label>
+                <label for="queryMode" class="form-label">Query Mode:</label>
                 <select id="queryMode" class="form-select" onchange="onModeChange()">
                     <option value="data">Query Data</option>
                     <option value="parquet">Find Parquet Files</option>
+                    <option value="custom">Custom SQL Query</option>
                 </select>
             </div>
 
-            <h3>Filters</h3>
-            <div id="filters"></div>
-            <div class="mt-2">
-                <button class="btn btn-secondary" onclick="addFilter()">Add Filter</button>
+            <div id="filtersSection">
+                <h3>Filters</h3>
+                <div id="filters"></div>
+                <div class="mt-2">
+                    <button class="btn btn-secondary" onclick="addFilter()">Add Filter</button>
+                </div>
+            </div>
+            
+            <div id="customSqlSection" style="display: none;" class="mt-4">
+                <h3>Custom SQL Query</h3>
+                <p class="text-muted">Enter your SQL query below. Only SELECT queries are allowed.</p>
+                <div class="form-group">
+                    <textarea id="sqlQueryInput" class="form-control" rows="6" placeholder="SELECT * FROM all_data LIMIT 10"></textarea>
+                </div>
             </div>
 
             <div id="ordering" class="data-mode-only mt-4">
@@ -88,7 +99,12 @@
             <h3 id="resultsTitle">Query Results</h3>
             <div class="table-container">
                 <table class="table table-striped">
-                    <thead id="resultsHeader"></thead>
+                    <thead id="resultsHeader">
+                        <!-- Table headers will be dynamically populated -->
+                        <tr>
+                            <th>Column Name</th>
+                        </tr>
+                    </thead>
                     <tbody id="resultsBody"></tbody>
                 </table>
             </div>
@@ -314,16 +330,29 @@
 
         function onModeChange() {
             const mode = document.getElementById('queryMode').value;
+            
             // Hide/show elements based on mode
             const dataModeElements = document.querySelectorAll('.data-mode-only');
             dataModeElements.forEach(element => {
                 element.style.display = mode === 'data' ? 'block' : 'none';
             });
             
+            // Hide/show filters and custom SQL sections
+            document.getElementById('filtersSection').style.display = mode === 'custom' ? 'none' : 'block';
+            document.getElementById('customSqlSection').style.display = mode === 'custom' ? 'block' : 'none';
+            
             // Update button text based on mode
             const executeButton = document.getElementById('executeButton');
-            executeButton.textContent = mode === 'data' ? 'Execute Query' : 'Find Files';
-            executeButton.className = mode === 'data' ? 'btn btn-primary' : 'btn btn-info';
+            if (mode === 'data') {
+                executeButton.textContent = 'Execute Query';
+                executeButton.className = 'btn btn-primary';
+            } else if (mode === 'custom') {
+                executeButton.textContent = 'Run SQL Query';
+                executeButton.className = 'btn btn-success';
+            } else {
+                executeButton.textContent = 'Find Files';
+                executeButton.className = 'btn btn-info';
+            }
             
             // Clear results and hide clear button
             clearResults();
@@ -331,46 +360,82 @@
 
         async function executeQuery() {
             const mode = document.getElementById('queryMode').value;
-            const filters = getFilters();
-            const orders = mode === 'data' ? getOrders() : [];
-            const limit = mode === 'data' ? parseInt(document.getElementById('limitInput').value) : null;
-
-            if (!filters.length) {
-                alert('Please add at least one filter');
-                return;
-            }
-
+            let response, data;
+            
+            // Show loading state
+            const executeButton = document.getElementById('executeButton');
+            const originalButtonText = executeButton.textContent;
+            executeButton.disabled = true;
+            executeButton.textContent = 'Loading...';
+            
             try {
-                const response = await fetch('http://127.0.0.1:5000/query', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({
-                        mode,
-                        filters,
-                        orders,
-                        limit
-                    })
-                });
-
+                if (mode === 'custom') {
+                    // Handle custom SQL query
+                    const sqlQuery = document.getElementById('sqlQueryInput').value.trim();
+                    
+                    if (!sqlQuery) {
+                        alert('Please enter a SQL query');
+                        return;
+                    }
+                    
+                    // Execute the custom SQL query
+                    response = await fetch('http://127.0.0.1:5000/execute_sql', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ sql: sqlQuery })
+                    });
+                } else {
+                    // Handle original filter-based queries
+                    const filters = getFilters();
+                    
+                    if (!filters.length && mode !== 'parquet') {
+                        if (!confirm('No filters specified. This will query all data and may be slow. Continue?')) {
+                            return;
+                        }
+                    }
+                    
+                    let requestData = { mode, filters };
+                    
+                    if (mode === 'data') {
+                        requestData.orders = getOrders();
+                        const limitInput = document.getElementById('limitInput');
+                        if (limitInput.value) {
+                            requestData.limit = parseInt(limitInput.value);
+                        }
+                    }
+                    
+                    // Execute the query
+                    response = await fetch('http://127.0.0.1:5000/query', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(requestData)
+                    });
+                }
+                
                 if (!response.ok) {
                     throw new Error(`HTTP error! status: ${response.status}`);
                 }
-
-                const data = await response.json();
+                
+                data = await response.json();
                 if (data.error) {
                     throw new Error(data.error);
                 }
-
-                if (mode === 'data') {
+                
+                // Display results based on query mode
+                if (mode === 'custom' || mode === 'data') {
+                    queryResults = data.results;
                     displayResults(data.results);
                 } else {
+                    parquetFiles = data.parquet_files;
                     displayParquetFiles(data.parquet_files);
                 }
             } catch (error) {
                 console.error('Error executing query:', error);
                 alert('Failed to execute query: ' + error.message);
+            } finally {
+                // Reset button state
+                executeButton.disabled = false;
+                executeButton.textContent = originalButtonText;
             }
         }
 
