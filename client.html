@@ -3,9 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Data Query Interface</title>
+    <title>SQL Query Interface</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link href="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/css/select2.min.css" rel="stylesheet" />
     <style>
         .filter-row {
             margin-bottom: 1rem;
@@ -20,19 +19,8 @@
         .table-container {
             max-height: 500px;
             overflow-y: auto;
-        }
-        #queryBuilder {
-            margin-bottom: 2rem;
-        }
-        .order-row {
-            margin-top: 1rem;
-        }
-        .table-container {
             margin-top: 20px;
             overflow-x: auto;
-        }
-        .form-select {
-            margin-bottom: 10px;
         }
         .filter-group {
             margin-bottom: 15px;
@@ -40,532 +28,315 @@
             border: 1px solid #ddd;
             border-radius: 5px;
         }
-        .data-mode-only {
-            display: block;
-        }
     </style>
 </head>
 <body>
     <div class="container mt-5">
-        <h1 class="mb-4">Data Query Interface</h1>
-        
-        <div id="queryBuilder">
-            <div class="mb-3">
-                <label for="queryMode" class="form-label">Query Mode:</label>
-                <select id="queryMode" class="form-select" onchange="onModeChange()">
-                    <option value="data">Query Data</option>
-                    <option value="parquet">Find Parquet Files</option>
-                    <option value="custom">Custom SQL Query</option>
-                </select>
-            </div>
+        <h1 class="mb-4">SQL Query Interface</h1>
 
-            <div id="filtersSection">
-                <h3>Filters</h3>
-                <div id="filters"></div>
-                <div class="mt-2">
-                    <button class="btn btn-secondary" onclick="addFilter()">Add Filter</button>
-                </div>
-            </div>
-            
-            <div id="customSqlSection" style="display: none;" class="mt-4">
-                <h3>Custom SQL Query</h3>
-                <p class="text-muted">Enter your SQL query below. Only SELECT queries are allowed.</p>
-                <div class="form-group">
-                    <textarea id="sqlQueryInput" class="form-control" rows="6" placeholder="SELECT * FROM all_data LIMIT 10"></textarea>
-                </div>
-            </div>
-
-            <div id="ordering" class="data-mode-only mt-4">
-                <h3>Ordering</h3>
-                <div id="orderingList"></div>
-                <button class="btn btn-secondary mt-2" onclick="addOrder()">Add Order</button>
-            </div>
-            
-            <div class="mt-4 data-mode-only">
-                <label for="limitInput" class="form-label">Limit Results</label>
-                <input type="number" class="form-control" id="limitInput" min="1" value="100">
-            </div>
-
-            <div class="mt-5" id="actionButtons">
-                <div class="d-flex gap-2">
-                    <button class="btn btn-info" onclick="executeQuery()" id="executeButton">Find Files</button>
-                    <button class="btn btn-success" onclick="exportToCsv()" id="exportButton" style="display: none;">Export to CSV</button>
-                    <button class="btn btn-danger" onclick="clearAll()" id="clearButton" style="display: none;">Clear All</button>
-                </div>
+        <div id="findFilesSection" class="mb-4">
+             <h3>Find Parquet Files</h3>
+             <p class="text-muted">Add filters to find parquet files containing matching data.</p>
+             <div id="filters"></div>
+             <div class="mt-2">
+                 <button class="btn btn-secondary" onclick="addFilter()">Add Filter</button>
+             </div>
+             <div class="mt-3">
+                <button class="btn btn-info" onclick="findFiles()" id="findFilesButton">Find Matching Files</button>
             </div>
         </div>
 
-        <div id="resultsSection" style="display: none;">
-            <h3 id="resultsTitle">Query Results</h3>
-            <div class="table-container">
-                <table class="table table-striped">
-                    <thead id="resultsHeader">
-                        <!-- Table headers will be dynamically populated -->
-                        <tr>
-                            <th>Column Name</th>
-                        </tr>
-                    </thead>
-                    <tbody id="resultsBody"></tbody>
-                </table>
+        <div id="customSqlSection" class="mt-4">
+            <h3>Custom SQL Query</h3>
+            <p class="text-muted">Enter your SQL query below (e.g., SELECT * FROM all_data WHERE condition LIMIT 10). Primarily SELECT, DESCRIBE, SHOW are allowed.</p>
+            <div class="form-group">
+                <textarea id="sqlQueryInput" class="form-control" rows="6" placeholder="SELECT * FROM all_data LIMIT 10"></textarea>
+            </div>
+             <div class="mt-3">
+                 <button class="btn btn-primary" onclick="executeCustomSql()" id="executeSqlButton">Execute SQL</button>
+             </div>
+        </div>
+
+        <div class="mt-4" id="resultActionButtons" style="display: none;">
+             <div class="d-flex gap-2">
+                 <button class="btn btn-success" onclick="exportToCsv()" id="exportButton">Export Results to CSV</button>
+                 <button class="btn btn-danger" onclick="clearAll()" id="clearButton">Clear Results & Filters</button>
+             </div>
+        </div>
+
+        <div id="resultsSection" style="display: none;" class="mt-4">
+            <h3 id="resultsTitle">Results</h3>
+            <div id="resultsContent"> 
+                 <!-- Results (table or list) will be inserted here -->
             </div>
         </div>
     </div>
 
     <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js"></script>
-    
+
     <script>
-        let config = {
-            available_columns: [],
-            operators: []
-        };
+        const operators = [
+            {value: "=", label: "equals"},
+            {value: "!=", label: "not equals"},
+            {value: ">", label: "greater than"},
+            {value: "<", label: "less than"},
+            {value: ">=", label: "greater than or equal"},
+            {value: "<=", label: "less than or equal"},
+            {value: "IN", label: "in list (comma-sep)"},
+            {value: "NOT IN", label: "not in list (comma-sep)"},
+            {value: "LIKE", label: "contains (case-sensitive)"}
+        ];
 
-        let queryResults = null; // Store the query results globally
-        let parquetFiles = null;
-
-        async function loadConfig() {
-            try {
-                const response = await fetch('http://127.0.0.1:5000/config');
-                if (!response.ok) {
-                    throw new Error(`HTTP error! status: ${response.status}`);
-                }
-                const data = await response.json();
-                if (data.error) {
-                    throw new Error(data.error);
-                }
-                
-                // Update config with received data
-                config.available_columns = data.available_columns || [];
-                config.operators = data.operators || [];
-                
-                // Initialize the interface
-                addFilter();
-                addOrder();
-            } catch (error) {
-                console.error('Error loading config:', error);
-                alert('Failed to load configuration. Please check the server logs and refresh the page.');
-            }
-        }
-
-        async function getDistinctValues(column) {
-            try {
-                const response = await fetch('http://127.0.0.1:5000/distinct', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ column })
-                });
-                const data = await response.json();
-                return data.values || [];
-            } catch (error) {
-                console.error('Error getting distinct values:', error);
-                return [];
-            }
-        }
-
-        function createColumnSelect(containerId, onChange) {
-            const select = document.createElement('select');
-            select.className = 'form-select column-select';
-            select.innerHTML = '<option value="">Select Column</option>' +
-                (config.available_columns || []).map(col => 
-                    `<option value="${col}">${col}</option>`
-                ).join('');
-            select.onchange = onChange;
-            return select;
-        }
+        let queryResults = null; 
+        let parquetFiles = null; 
+        const API_BASE_URL = 'http://127.0.0.1:5001'; 
 
         function createOperatorSelect() {
             const select = document.createElement('select');
             select.className = 'form-select operator-select';
             select.innerHTML = '<option value="">Select Operator</option>' +
-                config.operators.map(op => 
+                operators.map(op =>
                     `<option value="${op.value}">${op.label}</option>`
                 ).join('');
             return select;
         }
 
-        function addFilter() {
-            const filterContainer = document.createElement('div');
-            filterContainer.className = 'filter-row';
-            
-            const row = document.createElement('div');
-            row.className = 'row';
-            
-            // Column select
-            const colDiv = document.createElement('div');
-            colDiv.className = 'col';
-            const colSelect = createColumnSelect('column', () => {
-                // Clear and update value input when column changes
-                valueInput.value = '';
-                valueInput.style.display = 'block';
-                valueSelect.style.display = 'none';
-            });
-            colDiv.appendChild(colSelect);
-            
-            // Operator select
-            const opDiv = document.createElement('div');
-            opDiv.className = 'col';
-            const opSelect = createOperatorSelect();
-            opDiv.appendChild(opSelect);
-            
-            // Value input/select
-            const valueDiv = document.createElement('div');
-            valueDiv.className = 'col';
-            const valueInput = document.createElement('input');
-            valueInput.className = 'form-control value-input';
-            valueInput.placeholder = 'Enter value';
-            
-            const valueSelect = document.createElement('select');
-            valueSelect.className = 'form-control value-select';
-            valueSelect.style.display = 'none';
-            valueSelect.multiple = true;
-            
-            valueDiv.appendChild(valueInput);
-            valueDiv.appendChild(valueSelect);
-            
-            // Remove button
-            const removeDiv = document.createElement('div');
-            removeDiv.className = 'col-auto';
-            const removeBtn = document.createElement('button');
-            removeBtn.className = 'btn btn-danger';
-            removeBtn.innerHTML = 'Remove';
-            removeBtn.onclick = () => filterContainer.remove();
-            removeDiv.appendChild(removeBtn);
-            
-            row.appendChild(colDiv);
-            row.appendChild(opDiv);
-            row.appendChild(valueDiv);
-            row.appendChild(removeDiv);
-            filterContainer.appendChild(row);
-            
-            document.getElementById('filters').appendChild(filterContainer);
-            
-            // Initialize Select2 for the value select
-            $(valueSelect).select2({
-                width: '100%',
-                tags: true,
-                tokenSeparators: [',', ' ']
-            });
+        function createColumnInput() {
+            const input = document.createElement('input');
+            input.type = 'text';
+            input.className = 'form-control column-input';
+            input.placeholder = 'Column Name';
+            return input;
         }
 
-        function addOrder() {
-            const orderContainer = document.createElement('div');
-            orderContainer.className = 'order-row';
-            
-            const row = document.createElement('div');
-            row.className = 'row';
-            
-            // Column select
-            const colDiv = document.createElement('div');
-            colDiv.className = 'col';
-            const colSelect = createColumnSelect('orderColumn');
-            colDiv.appendChild(colSelect);
-            
-            // Direction select
-            const dirDiv = document.createElement('div');
-            dirDiv.className = 'col';
-            const dirSelect = document.createElement('select');
-            dirSelect.className = 'form-select direction-select';
-            dirSelect.innerHTML = `
-                <option value="">Select Direction</option>
-                <option value="ASC">Ascending</option>
-                <option value="DESC">Descending</option>
-            `;
-            dirDiv.appendChild(dirSelect);
-            
-            // Remove button
-            const removeDiv = document.createElement('div');
-            removeDiv.className = 'col-auto';
+        function addFilter() {
+            const filterContainer = document.createElement('div');
+            filterContainer.className = 'filter-row d-flex align-items-center gap-2'; 
+
+            const colInput = createColumnInput();
+
+            const opSelect = createOperatorSelect();
+
+            const valueInput = document.createElement('input');
+            valueInput.type = 'text';
+            valueInput.className = 'form-control value-input flex-grow-1'; 
+            valueInput.placeholder = 'Value (use comma for IN/NOT IN lists)';
+
             const removeBtn = document.createElement('button');
-            removeBtn.className = 'btn btn-danger';
-            removeBtn.innerHTML = 'Remove';
-            removeBtn.onclick = () => orderContainer.remove();
-            removeDiv.appendChild(removeBtn);
-            
-            row.appendChild(colDiv);
-            row.appendChild(dirDiv);
-            row.appendChild(removeDiv);
-            orderContainer.appendChild(row);
-            
-            document.getElementById('orderingList').appendChild(orderContainer);
+            removeBtn.textContent = 'Remove';
+            removeBtn.className = 'btn btn-outline-danger btn-sm';
+            removeBtn.onclick = () => filterContainer.remove();
+
+            filterContainer.appendChild(colInput);
+            filterContainer.appendChild(opSelect);
+            filterContainer.appendChild(valueInput);
+            filterContainer.appendChild(removeBtn);
+
+            document.getElementById('filters').appendChild(filterContainer);
         }
 
         function getFilters() {
             const filters = [];
             document.querySelectorAll('.filter-row').forEach(row => {
-                const column = row.querySelector('.column-select').value;
-                const operator = row.querySelector('.operator-select').value;
+                const columnInput = row.querySelector('.column-input');
+                const operatorSelect = row.querySelector('.operator-select');
                 const valueInput = row.querySelector('.value-input');
-                const valueSelect = row.querySelector('.value-select');
-                
-                if (column && operator) {
-                    let value;
-                    if (valueSelect.style.display === 'none') {
-                        value = valueInput.value;
-                        // Convert to number if possible
-                        if (!isNaN(value) && value !== '') {
-                            value = Number(value);
-                        }
-                    } else {
-                        value = $(valueSelect).select2('data').map(item => item.text);
+
+                const column = columnInput.value.trim();
+                const operator = operatorSelect.value;
+                let value = valueInput.value.trim();
+
+                if (column && operator && value) {
+                    if (operator === 'IN' || operator === 'NOT IN') {
+                        value = value.split(',').map(s => s.trim()).filter(s => s !== '');
+                        if (value.length === 0) return; 
                     }
-                    
+
                     filters.push({ column, operator, value });
                 }
             });
             return filters;
         }
 
-        function getOrders() {
-            const orders = [];
-            document.querySelectorAll('.order-row').forEach(row => {
-                const column = row.querySelector('.column-select').value;
-                const direction = row.querySelector('.direction-select').value;
-                if (column && direction) {
-                    orders.push({ column, direction });
-                }
-            });
-            return orders;
-        }
-
-        function onModeChange() {
-            const mode = document.getElementById('queryMode').value;
-            
-            // Hide/show elements based on mode
-            const dataModeElements = document.querySelectorAll('.data-mode-only');
-            dataModeElements.forEach(element => {
-                element.style.display = mode === 'data' ? 'block' : 'none';
-            });
-            
-            // Hide/show filters and custom SQL sections
-            document.getElementById('filtersSection').style.display = mode === 'custom' ? 'none' : 'block';
-            document.getElementById('customSqlSection').style.display = mode === 'custom' ? 'block' : 'none';
-            
-            // Update button text based on mode
-            const executeButton = document.getElementById('executeButton');
-            if (mode === 'data') {
-                executeButton.textContent = 'Execute Query';
-                executeButton.className = 'btn btn-primary';
-            } else if (mode === 'custom') {
-                executeButton.textContent = 'Run SQL Query';
-                executeButton.className = 'btn btn-success';
-            } else {
-                executeButton.textContent = 'Find Files';
-                executeButton.className = 'btn btn-info';
-            }
-            
-            // Clear results and hide clear button
+        async function findFiles() {
             clearResults();
-        }
+            const filters = getFilters();
+            console.log("Finding files with filters:", filters);
 
-        async function executeQuery() {
-            const mode = document.getElementById('queryMode').value;
-            let response, data;
-            
-            // Show loading state
-            const executeButton = document.getElementById('executeButton');
-            const originalButtonText = executeButton.textContent;
-            executeButton.disabled = true;
-            executeButton.textContent = 'Loading...';
-            
             try {
-                if (mode === 'custom') {
-                    // Handle custom SQL query
-                    const sqlQuery = document.getElementById('sqlQueryInput').value.trim();
-                    
-                    if (!sqlQuery) {
-                        alert('Please enter a SQL query');
-                        return;
-                    }
-                    
-                    // Execute the custom SQL query
-                    response = await fetch('http://127.0.0.1:5000/execute_sql', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ sql: sqlQuery })
-                    });
-                } else {
-                    // Handle original filter-based queries
-                    const filters = getFilters();
-                    
-                    if (!filters.length && mode !== 'parquet') {
-                        if (!confirm('No filters specified. This will query all data and may be slow. Continue?')) {
-                            return;
-                        }
-                    }
-                    
-                    let requestData = { mode, filters };
-                    
-                    if (mode === 'data') {
-                        requestData.orders = getOrders();
-                        const limitInput = document.getElementById('limitInput');
-                        if (limitInput.value) {
-                            requestData.limit = parseInt(limitInput.value);
-                        }
-                    }
-                    
-                    // Execute the query
-                    response = await fetch('http://127.0.0.1:5000/query', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(requestData)
-                    });
-                }
-                
+                const response = await fetch(`${API_BASE_URL}/query`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ filters })
+                });
+
+                const data = await response.json();
+
                 if (!response.ok) {
-                    throw new Error(`HTTP error! status: ${response.status}`);
+                    throw new Error(data.error || `HTTP error ${response.status}`);
                 }
-                
-                data = await response.json();
-                if (data.error) {
-                    throw new Error(data.error);
-                }
-                
-                // Display results based on query mode
-                if (mode === 'custom' || mode === 'data') {
-                    queryResults = data.results;
-                    displayResults(data.results);
-                } else {
-                    parquetFiles = data.parquet_files;
-                    displayParquetFiles(data.parquet_files);
-                }
+
+                parquetFiles = data.parquet_files || [];
+                displayParquetFiles(parquetFiles);
+                document.getElementById('resultActionButtons').style.display = 'none'; 
+
             } catch (error) {
-                console.error('Error executing query:', error);
-                alert('Failed to execute query: ' + error.message);
-            } finally {
-                // Reset button state
-                executeButton.disabled = false;
-                executeButton.textContent = originalButtonText;
+                console.error('Error finding files:', error);
+                displayError(`Error finding files: ${error.message}`);
+                parquetFiles = null;
             }
         }
 
-        function displayResults(results) {
+        async function executeCustomSql() {
+            clearResults();
+            const sql = document.getElementById('sqlQueryInput').value.trim();
+            if (!sql) {
+                alert('Please enter a SQL query.');
+                return;
+            }
+            console.log("Executing SQL:", sql);
+
+            try {
+                const response = await fetch(`${API_BASE_URL}/execute_sql`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ sql })
+                });
+
+                const data = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(data.error || `HTTP error ${response.status}`);
+                }
+
+                queryResults = data.results || [];
+                if (queryResults.length > 0) {
+                    displayResultsTable(queryResults);
+                    document.getElementById('resultActionButtons').style.display = 'block';
+                } else {
+                    displayMessage("Query executed successfully, but returned no results.");
+                    document.getElementById('resultActionButtons').style.display = 'none';
+                }
+
+            } catch (error) {
+                console.error('Error executing SQL:', error);
+                displayError(`Error executing SQL: ${error.message}`);
+                queryResults = null;
+                document.getElementById('resultActionButtons').style.display = 'none';
+            }
+        }
+
+        function displayResultsTable(results) {
+            const resultsContent = document.getElementById('resultsContent');
+            const resultsSection = document.getElementById('resultsSection');
+            const resultsTitle = document.getElementById('resultsTitle');
+
+            resultsContent.innerHTML = ''; 
+            resultsTitle.textContent = 'Query Results';
+
             if (!results || results.length === 0) {
-                document.getElementById('results').innerHTML = '<p>No results found</p>';
-                document.getElementById('exportButton').style.display = 'none';
-                document.getElementById('clearButton').style.display = 'flex';
-                document.getElementById('resultsSection').style.display = 'block';
+                resultsContent.innerHTML = '<p class="text-muted">No results found.</p>';
+                resultsSection.style.display = 'block';
                 return;
             }
 
-            // Store results globally for CSV export
-            queryResults = results;
+            const table = document.createElement('table');
+            table.className = 'table table-striped table-bordered table-sm'; 
 
-            // Show export button when we have results
-            document.getElementById('exportButton').style.display = 'flex';
-            document.getElementById('clearButton').style.display = 'flex';
-
-            const columns = Object.keys(results[0]);
-            
-            // Create header
+            const thead = document.createElement('thead');
             const headerRow = document.createElement('tr');
-            columns.forEach(col => {
+            Object.keys(results[0]).forEach(key => {
                 const th = document.createElement('th');
-                th.textContent = col;
+                th.textContent = key;
                 headerRow.appendChild(th);
             });
-            
-            const resultsHeader = document.getElementById('resultsHeader');
-            resultsHeader.innerHTML = '';
-            resultsHeader.appendChild(headerRow);
-            
-            // Create body
-            const tbody = document.getElementById('resultsBody');
-            tbody.innerHTML = '';
-            
+            thead.appendChild(headerRow);
+            table.appendChild(thead);
+
+            const tbody = document.createElement('tbody');
             results.forEach(row => {
                 const tr = document.createElement('tr');
-                columns.forEach(col => {
+                Object.values(row).forEach(value => {
                     const td = document.createElement('td');
-                    td.textContent = row[col] === null ? '' : row[col];
+                    td.textContent = (value === null || value === undefined) ? 'NULL' : value;
                     tr.appendChild(td);
                 });
                 tbody.appendChild(tr);
             });
-            
-            document.getElementById('resultsSection').style.display = 'block';
+            table.appendChild(tbody);
+
+            const tableContainer = document.createElement('div');
+            tableContainer.className = 'table-container';
+            tableContainer.appendChild(table);
+            resultsContent.appendChild(tableContainer);
+            resultsSection.style.display = 'block';
         }
 
         function displayParquetFiles(files) {
-            document.getElementById('exportButton').style.display = 'none';
-            document.getElementById('clearButton').style.display = 'block';
-            const resultsHeader = document.getElementById('resultsHeader');
-            const resultsBody = document.getElementById('resultsBody');
-            
-            resultsHeader.innerHTML = `
-                <tr>
-                    <th>File Name</th>
-                    <th>Action</th>
-                </tr>
-            `;
-            
-            resultsBody.innerHTML = '';
-            
-            if (!files || files.length === 0) {
-                resultsBody.innerHTML = '<tr><td colspan="2">No matching parquet files found</td></tr>';
-                document.getElementById('resultsSection').style.display = 'block';
-                return;
-            }
+            const resultsContent = document.getElementById('resultsContent');
+            const resultsSection = document.getElementById('resultsSection');
+            const resultsTitle = document.getElementById('resultsTitle');
 
-            files.forEach(file => {
-                const row = document.createElement('tr');
-                row.innerHTML = `
-                    <td>${file}</td>
-                    <td>
-                        <button class="btn btn-primary btn-sm" onclick="downloadParquet('${file}')">
-                            Download
-                        </button>
-                    </td>
-                `;
-                resultsBody.appendChild(row);
-            });
-            
-            document.getElementById('resultsSection').style.display = 'block';
+            resultsContent.innerHTML = ''; 
+            resultsTitle.textContent = 'Matching Parquet Files';
+
+            if (!files || files.length === 0) {
+                resultsContent.innerHTML = '<p class="text-muted">No matching parquet files found.</p>';
+            } else {
+                const list = document.createElement('ul');
+                list.className = 'list-group';
+                files.forEach(file => {
+                    const li = document.createElement('li');
+                    li.className = 'list-group-item d-flex justify-content-between align-items-center';
+                    li.textContent = file;
+
+                    list.appendChild(li);
+                });
+                resultsContent.appendChild(list);
+            }
+            resultsSection.style.display = 'block';
         }
 
-        async function downloadParquet(filename) {
-            try {
-                const response = await fetch(`http://127.0.0.1:5000/download/${encodeURIComponent(filename)}`);
-                const blob = await response.blob();
-                
-                const link = document.createElement('a');
-                link.href = URL.createObjectURL(blob);
-                link.download = filename;
-                document.body.appendChild(link);
-                link.click();
-                document.body.removeChild(link);
-            } catch (error) {
-                console.error('Error downloading file:', error);
-                alert('Failed to download file');
-            }
+        function displayMessage(message) {
+            const resultsContent = document.getElementById('resultsContent');
+            const resultsSection = document.getElementById('resultsSection');
+            const resultsTitle = document.getElementById('resultsTitle');
+            resultsContent.innerHTML = `<p class="text-info">${message}</p>`;
+            resultsTitle.textContent = 'Status';
+            resultsSection.style.display = 'block';
+        }
+
+        function displayError(errorMessage) {
+            const resultsContent = document.getElementById('resultsContent');
+            const resultsSection = document.getElementById('resultsSection');
+            const resultsTitle = document.getElementById('resultsTitle');
+            resultsContent.innerHTML = `<div class="alert alert-danger" role="alert">${errorMessage}</div>`;
+            resultsTitle.textContent = 'Error';
+            resultsSection.style.display = 'block';
         }
 
         function exportToCsv() {
             if (!queryResults || queryResults.length === 0) {
-                alert('No data to export');
+                alert('No results to export.');
                 return;
             }
 
-            // Get headers from the first result object
             const headers = Object.keys(queryResults[0]);
-            
-            // Create CSV content
-            const csvContent = [
-                headers.join(','), // Header row
-                ...queryResults.map(row => 
-                    headers.map(header => {
-                        // Handle values that need quotes (contains comma or quotes)
-                        let value = row[header] === null ? '' : String(row[header]);
-                        if (value.includes(',') || value.includes('"')) {
-                            value = `"${value.replace(/"/g, '""')}"`;
-                        }
-                        return value;
-                    }).join(',')
-                )
-            ].join('\n');
+            const csvRows = [];
+            csvRows.push(headers.join(',')); 
 
-            // Create blob and download
-            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+            queryResults.forEach(row => {
+                const values = headers.map(header => {
+                    const escaped = ('' + (row[header] === null || row[header] === undefined ? '' : row[header])).replace(/"/g, '\""'); 
+                    return `"${escaped}"`; 
+                });
+                csvRows.push(values.join(','));
+            });
+
+            const csvString = csvRows.join('\r\n');
+            const blob = new Blob([csvString], { type: 'text/csv;charset=utf-8;' });
+
             const link = document.createElement('a');
             const url = URL.createObjectURL(blob);
             link.setAttribute('href', url);
@@ -577,23 +348,21 @@
         }
 
         function clearResults() {
+            document.getElementById('resultsContent').innerHTML = '';
             document.getElementById('resultsSection').style.display = 'none';
-            document.getElementById('resultsHeader').innerHTML = '';
-            document.getElementById('resultsBody').innerHTML = '';
-            document.getElementById('exportButton').style.display = 'none';
-            document.getElementById('clearButton').style.display = 'none';
+            document.getElementById('resultActionButtons').style.display = 'none';
+            queryResults = null;
+            parquetFiles = null;
         }
 
         function clearAll() {
-            clearResults();
             document.getElementById('filters').innerHTML = '';
-            document.getElementById('orderingList').innerHTML = '';
-            document.getElementById('limitInput').value = '100';
+            addFilter(); 
+            document.getElementById('sqlQueryInput').value = '';
+            clearResults();
         }
 
-        // Initialize the interface
-        loadConfig();
-        onModeChange(); // Set initial button state
+        addFilter(); 
     </script>
 </body>
 </html>
