@@ -1,12 +1,10 @@
 import duckdb
-import glob
 import yaml
 from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
 import logging
 from pathlib import Path
 from sql_queries import *
-from typing import List, Dict, Any
 import os
 
 app = Flask(__name__)
