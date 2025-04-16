@@ -213,7 +213,7 @@ function displayParquetFiles(files) {
         item.className = 'list-group-item d-flex justify-content-between align-items-center';
         item.innerHTML = `
             <span>${file}</span>
-            <button class="btn btn-sm btn-primary" onclick="executeCustomSql('SELECT * FROM \\'${file}\\' LIMIT 10')">View Sample</button>
+            <a class="btn btn-sm btn-success" href="${API_BASE_URL}/download/${encodeURIComponent(file.split('/').pop())}" download>Download</a>
         `;
         fileList.appendChild(item);
     });
